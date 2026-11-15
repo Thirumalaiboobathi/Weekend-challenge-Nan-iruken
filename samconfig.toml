@@ -1,0 +1,20 @@
+# Replace BotUsername and AdminTelegramId below with your own values (bot from @BotFather; your Telegram user id).
+version = 0.1
+
+[default.global.parameters]
+stack_name = "naan-irukken"
+region = "ap-south-1"
+
+[default.build.parameters]
+cached = true
+parallel = true
+
+[default.validate.parameters]
+lint = true
+
+[default.deploy.parameters]
+capabilities = "CAPABILITY_IAM"
+confirm_changeset = false
+resolve_s3 = true
+fail_on_empty_changeset = false
+parameter_overrides = "BotUsername=naanirukken_thiru_bot AdminTelegramId=1276258406 DemoMode=true"

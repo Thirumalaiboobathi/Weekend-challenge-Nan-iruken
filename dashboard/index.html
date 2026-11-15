@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Naan Irukken - family dashboard</title>
+<style>
+:root{--bg:#faf7f2;--card:#fff;--ink:#222;--mut:#777;--g:#2e9e5b;--a:#e8a21a;--r:#d64545;--n:#b9b9b9}
+@media(prefers-color-scheme:dark){:root{--bg:#161616;--card:#222;--ink:#eee;--mut:#999}}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px system-ui,sans-serif}
+main{max-width:520px;margin:0 auto;padding:16px}
+.card{background:var(--card);border-radius:12px;padding:14px 16px;margin:0 0 12px;box-shadow:0 1px 3px #0002}
+h1{font-size:20px;margin:4px 0 12px}h2{font-size:14px;color:var(--mut);margin:0 0 8px;text-transform:uppercase;letter-spacing:.04em}
+.big{font-size:22px;font-weight:600}.mut{color:var(--mut);font-size:14px}
+#strip{display:grid;grid-template-columns:repeat(10,1fr);gap:5px}
+#strip button{aspect-ratio:1;border:0;border-radius:6px;background:var(--n);opacity:.35;padding:0}
+#strip button.has{opacity:1}#strip button.sel{outline:2px solid var(--ink)}
+ul{list-style:none;padding:0;margin:8px 0 0;font-size:14px}li{padding:4px 0;border-top:1px solid #8882}
+</style></head><body><main>
+<h1>🙏 <span id="who">Naan Irukken</span></h1>
+<div class="card"><h2>Today</h2><div class="big" id="today">Loading…</div><div class="mut" id="todaySub"></div></div>
+<div class="card"><h2>Streak</h2><div class="big" id="streak"></div><div class="mut" id="seen"></div></div>
+<div class="card"><h2>Last 30 days</h2><div id="strip"></div><div class="mut" id="dayTitle">Tap a day for its timeline</div><ul id="events"></ul></div>
+<div class="card"><h2>Routine</h2><div id="routine"></div><div class="mut">About routine only - not health.</div></div>
+<div class="card"><h2>Estimate at AWS list prices (monthly)</h2><div class="big" id="cost"></div><div class="mut" id="costSub"></div></div>
+</main>
+<script>
+const COLOR={resolved:"--g",confirmed_safe:"--g",escalated:"--a",needs_help:"--r",help_unclaimed:"--r",skipped:"--n",duplicate:"--n",error:"--n"};
+const LABEL={resolved:"Checked in",confirmed_safe:"Family confirmed safe",escalated:"Escalated to family",needs_help:"Needs help",help_unclaimed:"Help needed - unclaimed",skipped:"Paused",error:"Error"};
+const $=id=>document.getElementById(id);
+const esc=s=>String(s??"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const code=location.pathname.split("/").filter(Boolean).pop();
+fetch("/api/family/"+code).then(r=>{if(!r.ok)throw 0;return r.json()}).then(d=>{
+  $("who").textContent=d.name||"Family";
+  const t=d.days.find(x=>x.date===d.today);
+  $("today").textContent=t?LABEL[t.outcome]||t.outcome:"No check-in yet today";
+  $("todaySub").textContent=t?[t.resolvedBy&&t.resolvedBy!=="-"&&"Resolved by "+t.resolvedBy,t.claimedBy&&"Claimed by "+t.claimedBy,t.confirmedBy&&"Confirmed by "+t.confirmedBy].filter(Boolean).join(" · "):"";
+  $("streak").textContent=d.streak+" day"+(d.streak==1?"":"s");$("seen").textContent="Last seen: "+d.lastSeen;
+  const byDate={};d.days.forEach(x=>byDate[x.date]=x);
+  const strip=$("strip");const now=new Date(d.today+"T00:00:00");
+  for(let i=29;i>=0;i--){const dt=new Date(now);dt.setDate(now.getDate()-i);const k=dt.toISOString().slice(0,10);
+    const b=document.createElement("button");const x=byDate[k];b.title=k;
+    if(x){b.className="has";b.style.background="var("+(COLOR[x.outcome]||"--n")+")";b.onclick=()=>{document.querySelectorAll("#strip .sel").forEach(e=>e.classList.remove("sel"));b.classList.add("sel");show(k,x)}}
+    strip.appendChild(b)}
+  function show(k,x){$("dayTitle").textContent=k+" - "+(LABEL[x.outcome]||x.outcome);
+    $("events").innerHTML=x.events.map(e=>"<li>"+esc(e.t)+" · "+esc(e.type)+(e.actor?" · "+esc(e.actor):"")+(e.stage?" ("+esc(e.stage)+")":"")+(e.detail?" - "+esc(e.detail):"")+"</li>").join("")}
+  $("routine").textContent=d.routine.message;
+  $("cost").textContent="₹"+d.cost.inr+" / $"+d.cost.usd;
+  const c=d.cost.counts;$("costSub").textContent=c.stateTransitions+" state transitions · "+c.lambdaInvocations+" Lambda calls · "+c.dynamoWrites+" DynamoDB writes · "+c.s3Puts+" S3 PUTs (last 30 days).";
+  if(d.cost.freeTierFamilies!=null)$("costSub").textContent+=" Step Functions free tier (4,000 transitions/mo) covers ~"+d.cost.freeTierFamilies+" famil"+(d.cost.freeTierFamilies==1?"y":"ies")+".";
+}).catch(()=>{$("today").textContent="Dashboard not found."});
+</script></body></html>

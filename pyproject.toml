@@ -1,0 +1,17 @@
+[project]
+name = "naan-irukken"
+version = "0.1.0"
+description = "Daily Telegram check-ins for elderly parents, with serverless escalation"
+requires-python = ">=3.12"
+# Lambdas use only boto3 (provided by the runtime) + stdlib.
+dependencies = []
+
+[dependency-groups]
+dev = ["boto3>=1.35", "pytest>=8"]
+
+[tool.uv]
+package = false
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]

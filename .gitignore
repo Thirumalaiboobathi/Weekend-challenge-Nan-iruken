@@ -1,0 +1,15 @@
+.aws-sam/
+__pycache__/
+*.pyc
+.venv/
+*.env
+.env*
+scratchpad/
+*.log
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+.pytest_cache/
+demo-video/.profile/
+demo-video/out/

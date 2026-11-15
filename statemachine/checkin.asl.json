@@ -1,0 +1,694 @@
+{
+  "Comment": "Naan Irukken daily check-in escalation",
+  "StartAt": "Init",
+  "States": {
+    "Init": {
+      "Type": "Pass",
+      "Result": {
+        "n": 0
+      },
+      "ResultPath": "$.reesc",
+      "Next": "LoadProfile"
+    },
+    "LoadProfile": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "${LoadProfileFunctionArn}",
+        "Payload.$": "$"
+      },
+      "ResultSelector": {
+        "name.$": "$.Payload.name",
+        "paused.$": "$.Payload.paused",
+        "duplicate.$": "$.Payload.duplicate",
+        "lastSeen.$": "$.Payload.lastSeen"
+      },
+      "ResultPath": "$.profile",
+      "Retry": [
+        {
+          "ErrorEquals": [
+            "Lambda.ServiceException",
+            "Lambda.AWSLambdaException",
+            "Lambda.SdkClientException",
+            "Lambda.TooManyRequestsException"
+          ],
+          "IntervalSeconds": 2,
+          "MaxAttempts": 2,
+          "BackoffRate": 2
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": [
+            "States.ALL"
+          ],
+          "ResultPath": "$.error",
+          "Next": "LogResult"
+        }
+      ],
+      "Next": "CheckPaused"
+    },
+    "CheckPaused": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "Variable": "$.profile.paused",
+          "BooleanEquals": true,
+          "Next": "LogResult"
+        }
+      ],
+      "Default": "PingParent"
+    },
+    "PingParent": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke.waitForTaskToken",
+      "Parameters": {
+        "FunctionName": "${NotifyFunctionArn}",
+        "Payload": {
+          "stage": "ping",
+          "userId.$": "$.userId",
+          "checkinId.$": "$.checkinId",
+          "token.$": "$$.Task.Token"
+        }
+      },
+      "TimeoutSecondsPath": "$.timeouts.ping",
+      "ResultPath": "$.stages.ping",
+      "Retry": [
+        {
+          "ErrorEquals": [
+            "Lambda.ServiceException",
+            "Lambda.AWSLambdaException",
+            "Lambda.SdkClientException",
+            "Lambda.TooManyRequestsException"
+          ],
+          "IntervalSeconds": 2,
+          "MaxAttempts": 2,
+          "BackoffRate": 2
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": [
+            "States.Timeout"
+          ],
+          "ResultPath": "$.stages.ping",
+          "Next": "RemindParent"
+        },
+        {
+          "ErrorEquals": [
+            "States.ALL"
+          ],
+          "ResultPath": "$.error",
+          "Next": "LogResult"
+        }
+      ],
+      "Next": "CheckPing"
+    },
+    "CheckPing": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "Variable": "$.stages.ping.status",
+          "StringEquals": "help",
+          "Next": "UrgentAlert"
+        }
+      ],
+      "Default": "LogResult"
+    },
+    "RemindParent": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke.waitForTaskToken",
+      "Parameters": {
+        "FunctionName": "${NotifyFunctionArn}",
+        "Payload": {
+          "stage": "remind",
+          "userId.$": "$.userId",
+          "checkinId.$": "$.checkinId",
+          "token.$": "$$.Task.Token",
+          "stages.$": "$.stages"
+        }
+      },
+      "TimeoutSecondsPath": "$.timeouts.remind",
+      "ResultPath": "$.stages.remind",
+      "Retry": [
+        {
+          "ErrorEquals": [
+            "Lambda.ServiceException",
+            "Lambda.AWSLambdaException",
+            "Lambda.SdkClientException",
+            "Lambda.TooManyRequestsException"
+          ],
+          "IntervalSeconds": 2,
+          "MaxAttempts": 2,
+          "BackoffRate": 2
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": [
+            "States.Timeout"
+          ],
+          "ResultPath": "$.stages.remind",
+          "Next": "AlertContact1"
+        },
+        {
+          "ErrorEquals": [
+            "States.ALL"
+          ],
+          "ResultPath": "$.error",
+          "Next": "LogResult"
+        }
+      ],
+      "Next": "CheckRemind"
+    },
+    "CheckRemind": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "Variable": "$.stages.remind.status",
+          "StringEquals": "help",
+          "Next": "UrgentAlert"
+        }
+      ],
+      "Default": "LogResult"
+    },
+    "AlertContact1": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke.waitForTaskToken",
+      "Parameters": {
+        "FunctionName": "${NotifyFunctionArn}",
+        "Payload": {
+          "stage": "contact1",
+          "userId.$": "$.userId",
+          "checkinId.$": "$.checkinId",
+          "token.$": "$$.Task.Token",
+          "stages.$": "$.stages"
+        }
+      },
+      "TimeoutSecondsPath": "$.timeouts.contact",
+      "ResultPath": "$.stages.contact1",
+      "Retry": [
+        {
+          "ErrorEquals": [
+            "Lambda.ServiceException",
+            "Lambda.AWSLambdaException",
+            "Lambda.SdkClientException",
+            "Lambda.TooManyRequestsException"
+          ],
+          "IntervalSeconds": 2,
+          "MaxAttempts": 2,
+          "BackoffRate": 2
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": [
+            "States.Timeout"
+          ],
+          "ResultPath": "$.stages.contact1",
+          "Next": "AlertContact2"
+        },
+        {
+          "ErrorEquals": [
+            "States.ALL"
+          ],
+          "ResultPath": "$.error",
+          "Next": "LogResult"
+        }
+      ],
+      "Next": "CheckContact1"
+    },
+    "CheckContact1": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "Variable": "$.stages.contact1.status",
+          "StringEquals": "help",
+          "Next": "UrgentAlert"
+        },
+        {
+          "Variable": "$.stages.contact1.status",
+          "StringEquals": "claimed",
+          "Next": "AwaitConfirmation"
+        }
+      ],
+      "Default": "LogResult"
+    },
+    "AlertContact2": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke.waitForTaskToken",
+      "Parameters": {
+        "FunctionName": "${NotifyFunctionArn}",
+        "Payload": {
+          "stage": "contact2",
+          "userId.$": "$.userId",
+          "checkinId.$": "$.checkinId",
+          "token.$": "$$.Task.Token",
+          "stages.$": "$.stages"
+        }
+      },
+      "TimeoutSecondsPath": "$.timeouts.contact",
+      "ResultPath": "$.stages.contact2",
+      "Retry": [
+        {
+          "ErrorEquals": [
+            "Lambda.ServiceException",
+            "Lambda.AWSLambdaException",
+            "Lambda.SdkClientException",
+            "Lambda.TooManyRequestsException"
+          ],
+          "IntervalSeconds": 2,
+          "MaxAttempts": 2,
+          "BackoffRate": 2
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": [
+            "States.Timeout"
+          ],
+          "ResultPath": "$.stages.contact2",
+          "Next": "AlertAll"
+        },
+        {
+          "ErrorEquals": [
+            "States.ALL"
+          ],
+          "ResultPath": "$.error",
+          "Next": "LogResult"
+        }
+      ],
+      "Next": "CheckContact2"
+    },
+    "CheckContact2": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "Variable": "$.stages.contact2.status",
+          "StringEquals": "help",
+          "Next": "UrgentAlert"
+        },
+        {
+          "Variable": "$.stages.contact2.status",
+          "StringEquals": "claimed",
+          "Next": "AwaitConfirmation"
+        }
+      ],
+      "Default": "LogResult"
+    },
+    "AlertAll": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "${NotifyFunctionArn}",
+        "Payload": {
+          "stage": "all",
+          "userId.$": "$.userId",
+          "checkinId.$": "$.checkinId",
+          "stages.$": "$.stages"
+        }
+      },
+      "ResultSelector": {
+        "sent.$": "$.Payload.sent"
+      },
+      "ResultPath": "$.stages.all",
+      "Retry": [
+        {
+          "ErrorEquals": [
+            "Lambda.ServiceException",
+            "Lambda.AWSLambdaException",
+            "Lambda.SdkClientException",
+            "Lambda.TooManyRequestsException"
+          ],
+          "IntervalSeconds": 2,
+          "MaxAttempts": 2,
+          "BackoffRate": 2
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": [
+            "States.ALL"
+          ],
+          "ResultPath": "$.error",
+          "Next": "LogResult"
+        }
+      ],
+      "Next": "LogResult"
+    },
+    "UrgentAlert": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke.waitForTaskToken",
+      "Parameters": {
+        "FunctionName": "${NotifyFunctionArn}",
+        "Payload": {
+          "stage": "urgent",
+          "userId.$": "$.userId",
+          "checkinId.$": "$.checkinId",
+          "token.$": "$$.Task.Token",
+          "stages.$": "$.stages"
+        }
+      },
+      "TimeoutSecondsPath": "$.timeouts.contact",
+      "ResultPath": "$.stages.urgent",
+      "Retry": [
+        {
+          "ErrorEquals": [
+            "Lambda.ServiceException",
+            "Lambda.AWSLambdaException",
+            "Lambda.SdkClientException",
+            "Lambda.TooManyRequestsException"
+          ],
+          "IntervalSeconds": 2,
+          "MaxAttempts": 2,
+          "BackoffRate": 2
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": [
+            "States.Timeout"
+          ],
+          "ResultPath": "$.stages.urgent",
+          "Next": "UrgentAlert2"
+        },
+        {
+          "ErrorEquals": [
+            "States.ALL"
+          ],
+          "ResultPath": "$.error",
+          "Next": "LogResult"
+        }
+      ],
+      "Next": "CheckUrgent"
+    },
+    "CheckUrgent": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "Variable": "$.stages.urgent.status",
+          "StringEquals": "claimed",
+          "Next": "AwaitConfirmation"
+        }
+      ],
+      "Default": "LogResult"
+    },
+    "UrgentAlert2": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke.waitForTaskToken",
+      "Parameters": {
+        "FunctionName": "${NotifyFunctionArn}",
+        "Payload": {
+          "stage": "urgent2",
+          "userId.$": "$.userId",
+          "checkinId.$": "$.checkinId",
+          "token.$": "$$.Task.Token",
+          "stages.$": "$.stages"
+        }
+      },
+      "TimeoutSecondsPath": "$.timeouts.contact",
+      "ResultPath": "$.stages.urgent2",
+      "Retry": [
+        {
+          "ErrorEquals": [
+            "Lambda.ServiceException",
+            "Lambda.AWSLambdaException",
+            "Lambda.SdkClientException",
+            "Lambda.TooManyRequestsException"
+          ],
+          "IntervalSeconds": 2,
+          "MaxAttempts": 2,
+          "BackoffRate": 2
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": [
+            "States.Timeout"
+          ],
+          "ResultPath": "$.stages.urgent2",
+          "Next": "ParentEmergency"
+        },
+        {
+          "ErrorEquals": [
+            "States.ALL"
+          ],
+          "ResultPath": "$.error",
+          "Next": "LogResult"
+        }
+      ],
+      "Next": "CheckUrgent2"
+    },
+    "CheckUrgent2": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "Variable": "$.stages.urgent2.status",
+          "StringEquals": "claimed",
+          "Next": "AwaitConfirmation"
+        }
+      ],
+      "Default": "LogResult"
+    },
+    "ParentEmergency": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "${NotifyFunctionArn}",
+        "Payload": {
+          "stage": "parent112",
+          "userId.$": "$.userId",
+          "checkinId.$": "$.checkinId",
+          "stages.$": "$.stages"
+        }
+      },
+      "ResultSelector": {
+        "sent.$": "$.Payload.sent"
+      },
+      "ResultPath": "$.stages.parent112",
+      "Retry": [
+        {
+          "ErrorEquals": [
+            "Lambda.ServiceException",
+            "Lambda.AWSLambdaException",
+            "Lambda.SdkClientException",
+            "Lambda.TooManyRequestsException"
+          ],
+          "IntervalSeconds": 2,
+          "MaxAttempts": 2,
+          "BackoffRate": 2
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": [
+            "States.ALL"
+          ],
+          "ResultPath": "$.error",
+          "Next": "LogResult"
+        }
+      ],
+      "Next": "LogResult"
+    },
+    "AwaitConfirmation": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke.waitForTaskToken",
+      "Parameters": {
+        "FunctionName": "${NotifyFunctionArn}",
+        "Payload": {
+          "stage": "confirm",
+          "userId.$": "$.userId",
+          "checkinId.$": "$.checkinId",
+          "token.$": "$$.Task.Token",
+          "stages.$": "$.stages"
+        }
+      },
+      "TimeoutSecondsPath": "$.timeouts.confirm",
+      "ResultPath": "$.stages.confirm",
+      "Retry": [
+        {
+          "ErrorEquals": [
+            "Lambda.ServiceException",
+            "Lambda.AWSLambdaException",
+            "Lambda.SdkClientException",
+            "Lambda.TooManyRequestsException"
+          ],
+          "IntervalSeconds": 2,
+          "MaxAttempts": 2,
+          "BackoffRate": 2
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": [
+            "States.Timeout"
+          ],
+          "ResultPath": "$.stages.confirm",
+          "Next": "BumpReescalation"
+        },
+        {
+          "ErrorEquals": [
+            "States.ALL"
+          ],
+          "ResultPath": "$.error",
+          "Next": "LogResult"
+        }
+      ],
+      "Next": "CheckConfirm"
+    },
+    "CheckConfirm": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "Variable": "$.stages.confirm.status",
+          "StringEquals": "needs_help",
+          "Next": "EmergencyAlert"
+        }
+      ],
+      "Default": "LogResult"
+    },
+    "EmergencyAlert": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "${NotifyFunctionArn}",
+        "Payload": {
+          "stage": "emergency",
+          "userId.$": "$.userId",
+          "checkinId.$": "$.checkinId",
+          "stages.$": "$.stages"
+        }
+      },
+      "ResultSelector": {
+        "sent.$": "$.Payload.sent"
+      },
+      "ResultPath": "$.stages.emergency",
+      "Retry": [
+        {
+          "ErrorEquals": [
+            "Lambda.ServiceException",
+            "Lambda.AWSLambdaException",
+            "Lambda.SdkClientException",
+            "Lambda.TooManyRequestsException"
+          ],
+          "IntervalSeconds": 2,
+          "MaxAttempts": 2,
+          "BackoffRate": 2
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": [
+            "States.ALL"
+          ],
+          "ResultPath": "$.error",
+          "Next": "LogResult"
+        }
+      ],
+      "Next": "LogResult"
+    },
+    "BumpReescalation": {
+      "Type": "Pass",
+      "Parameters": {
+        "n.$": "States.MathAdd($.reesc.n, 1)"
+      },
+      "ResultPath": "$.reesc",
+      "Next": "CheckReescalationLimit"
+    },
+    "CheckReescalationLimit": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "Variable": "$.reesc.n",
+          "NumericLessThanEquals": 2,
+          "Next": "ReEscalate"
+        }
+      ],
+      "Default": "AlertAll"
+    },
+    "ReEscalate": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke.waitForTaskToken",
+      "Parameters": {
+        "FunctionName": "${NotifyFunctionArn}",
+        "Payload": {
+          "stage": "reescalate",
+          "userId.$": "$.userId",
+          "checkinId.$": "$.checkinId",
+          "token.$": "$$.Task.Token",
+          "stages.$": "$.stages"
+        }
+      },
+      "TimeoutSecondsPath": "$.timeouts.contact",
+      "ResultPath": "$.stages.reescalate",
+      "Retry": [
+        {
+          "ErrorEquals": [
+            "Lambda.ServiceException",
+            "Lambda.AWSLambdaException",
+            "Lambda.SdkClientException",
+            "Lambda.TooManyRequestsException"
+          ],
+          "IntervalSeconds": 2,
+          "MaxAttempts": 2,
+          "BackoffRate": 2
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": [
+            "States.Timeout"
+          ],
+          "ResultPath": "$.stages.reescalate",
+          "Next": "BumpReescalation"
+        },
+        {
+          "ErrorEquals": [
+            "States.ALL"
+          ],
+          "ResultPath": "$.error",
+          "Next": "LogResult"
+        }
+      ],
+      "Next": "CheckReescalate"
+    },
+    "CheckReescalate": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "Variable": "$.stages.reescalate.status",
+          "StringEquals": "claimed",
+          "Next": "AwaitConfirmation"
+        }
+      ],
+      "Default": "LogResult"
+    },
+    "LogResult": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "${LogResultFunctionArn}",
+        "Payload.$": "$"
+      },
+      "ResultSelector": {
+        "outcome.$": "$.Payload.outcome",
+        "stageReached.$": "$.Payload.stageReached"
+      },
+      "ResultPath": "$.result",
+      "Retry": [
+        {
+          "ErrorEquals": [
+            "Lambda.ServiceException",
+            "Lambda.AWSLambdaException",
+            "Lambda.SdkClientException",
+            "Lambda.TooManyRequestsException"
+          ],
+          "IntervalSeconds": 2,
+          "MaxAttempts": 2,
+          "BackoffRate": 2
+        }
+      ],
+      "End": true
+    }
+  }
+}

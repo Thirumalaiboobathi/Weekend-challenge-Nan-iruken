@@ -1,0 +1,314 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: Naan Irukken - daily Telegram check-ins for elderly parents, with escalation to family.
+
+Parameters:
+  BotUsername:
+    Type: String
+    Description: Telegram bot username without the @ (used for invite deep links)
+    Default: naan_irukken_bot
+  AdminTelegramId:
+    Type: String
+    Description: Your Telegram user id - the only user allowed to run /demo
+    Default: "0"
+  DemoMode:
+    Type: String
+    AllowedValues: ["true", "false"]
+    Default: "true"
+    Description: true = 25s/25s/20s escalation timeouts for the demo video
+  SecretsPrefix:
+    Type: String
+    Default: /naan-irukken
+    Description: SSM prefix holding bot-token and webhook-secret (see scripts/put_secrets.ps1)
+
+Globals:
+  Function:
+    Runtime: python3.12
+    Architectures: [arm64]
+    MemorySize: 256
+    Timeout: 15
+    CodeUri: src/
+    Environment:
+      Variables:
+        TABLE_NAME: !Ref Table
+        BOT_TOKEN_PARAM: !Sub "${SecretsPrefix}/bot-token"
+        WEBHOOK_SECRET_PARAM: !Sub "${SecretsPrefix}/webhook-secret"
+        BOT_USERNAME: !Ref BotUsername
+        ADMIN_TELEGRAM_ID: !Ref AdminTelegramId
+        DEMO_MODE: !Ref DemoMode
+        BUCKET_NAME: !Ref AuditBucket
+
+Resources:
+  Table:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: NaanIrukken
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - { AttributeName: PK, AttributeType: S }
+        - { AttributeName: SK, AttributeType: S }
+      KeySchema:
+        - { AttributeName: PK, KeyType: HASH }
+        - { AttributeName: SK, KeyType: RANGE }
+      TimeToLiveSpecification:
+        AttributeName: ttl
+        Enabled: true
+
+  AuditBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault: { SSEAlgorithm: AES256 }
+      LifecycleConfiguration:
+        Rules:
+          - Id: history-to-glacier-ir
+            Status: Enabled
+            Prefix: history/
+            Transitions:
+              - { StorageClass: GLACIER_IR, TransitionInDays: 90 }
+
+  HttpApi:
+    Type: AWS::Serverless::HttpApi
+
+  FamilyApiFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: family_api.app.lambda_handler
+      Description: Family dashboard - serves the page from S3 and the JSON from the audit history
+      Timeout: 20
+      Policies:
+        - DynamoDBReadPolicy:
+            TableName: !Ref Table
+        - Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Action: s3:GetObject
+              Resource:
+                - !Sub "${AuditBucket.Arn}/history/*"
+                - !Sub "${AuditBucket.Arn}/dashboard/*"
+            - Effect: Allow
+              Action: s3:ListBucket
+              Resource: !GetAtt AuditBucket.Arn
+      Events:
+        Page:
+          Type: HttpApi
+          Properties: { ApiId: !Ref HttpApi, Path: "/d/{familyCode}", Method: GET }
+        Json:
+          Type: HttpApi
+          Properties: { ApiId: !Ref HttpApi, Path: "/api/family/{familyCode}", Method: GET }
+
+  DigestFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: digest.app.lambda_handler
+      Description: Weekly digest to S3 and Telegram (Sunday 19:00 IST)
+      Timeout: 60
+      Policies:
+        - DynamoDBReadPolicy:
+            TableName: !Ref Table
+        - Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Action: ssm:GetParameter
+              Resource: !Sub "arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter${SecretsPrefix}/bot-token"
+            - Effect: Allow
+              Action: s3:GetObject
+              Resource: !Sub "${AuditBucket.Arn}/history/*"
+            - Effect: Allow
+              Action: s3:PutObject
+              Resource: !Sub "${AuditBucket.Arn}/digests/*"
+            - Effect: Allow
+              Action: s3:ListBucket
+              Resource: !GetAtt AuditBucket.Arn
+
+  DigestSchedulerRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: { Service: scheduler.amazonaws.com }
+            Action: sts:AssumeRole
+            Condition:
+              StringEquals: { "aws:SourceAccount": !Ref "AWS::AccountId" }
+      Policies:
+        - PolicyName: invoke-digest
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: lambda:InvokeFunction
+                Resource: !GetAtt DigestFunction.Arn
+
+  DigestSchedule:
+    Type: AWS::Scheduler::Schedule
+    Properties:
+      Name: naan-weekly-digest
+      ScheduleExpression: cron(0 19 ? * SUN *)
+      ScheduleExpressionTimezone: Asia/Kolkata
+      FlexibleTimeWindow: { Mode: "OFF" }
+      Target:
+        Arn: !GetAtt DigestFunction.Arn
+        RoleArn: !GetAtt DigestSchedulerRole.Arn
+
+  BotHandlerFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: bot_handler.app.lambda_handler
+      Description: Telegram webhook - commands and button taps
+      Environment:
+        Variables:
+          STATE_MACHINE_ARN: !Ref CheckinStateMachine
+          SCHEDULER_ROLE_ARN: !GetAtt SchedulerInvokeRole.Arn
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref Table
+        - Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Action: ssm:GetParameter
+              Resource:
+                - !Sub "arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter${SecretsPrefix}/bot-token"
+                - !Sub "arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter${SecretsPrefix}/webhook-secret"
+            - Effect: Allow
+              Action: states:StartExecution
+              Resource: !Ref CheckinStateMachine
+            - Effect: Allow
+              Action: [scheduler:CreateSchedule, scheduler:UpdateSchedule]
+              Resource: !Sub "arn:${AWS::Partition}:scheduler:${AWS::Region}:${AWS::AccountId}:schedule/default/naan-*"
+            - Effect: Allow
+              Action: iam:PassRole
+              Resource: !GetAtt SchedulerInvokeRole.Arn
+            - Effect: Allow
+              # Task-token actions do not support resource-level permissions (AWS docs); "*" is the tightest option.
+              Action:
+                - states:SendTaskSuccess
+                - states:SendTaskFailure
+              Resource: "*"
+      Events:
+        Webhook:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /telegram/webhook
+            Method: POST
+
+  SchedulerInvokeRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: { Service: scheduler.amazonaws.com }
+            Action: sts:AssumeRole
+            Condition:
+              StringEquals: { "aws:SourceAccount": !Ref "AWS::AccountId" }
+      Policies:
+        - PolicyName: start-checkin
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: states:StartExecution
+                Resource: !Ref CheckinStateMachine
+
+  LoadProfileFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: load_profile.app.lambda_handler
+      Description: Check-in step 1 - paused? already started today?
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref Table
+
+  NotifyFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: notify.app.lambda_handler
+      Description: Sends the Telegram message for one stage and stores the task token
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref Table
+        - Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Action: ssm:GetParameter
+              Resource: !Sub "arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter${SecretsPrefix}/bot-token"
+
+  LogResultFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: log_result.app.lambda_handler
+      Description: Records the outcome, updates the streak, removes stale buttons, writes the S3 audit record
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref Table
+        - Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Action: s3:PutObject
+              Resource: !Sub "${AuditBucket.Arn}/history/*"
+            - Effect: Allow
+              Action: ssm:GetParameter
+              Resource: !Sub "arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter${SecretsPrefix}/bot-token"
+
+  CheckinLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /aws/vendedlogs/states/naan-irukken-checkin
+      RetentionInDays: 14
+
+  CheckinStateMachine:
+    Type: AWS::Serverless::StateMachine
+    Properties:
+      Type: STANDARD
+      DefinitionUri: statemachine/checkin.asl.json
+      DefinitionSubstitutions:
+        LoadProfileFunctionArn: !GetAtt LoadProfileFunction.Arn
+        NotifyFunctionArn: !GetAtt NotifyFunction.Arn
+        LogResultFunctionArn: !GetAtt LogResultFunction.Arn
+      Logging:
+        Level: ERROR
+        IncludeExecutionData: false
+        Destinations:
+          - CloudWatchLogsLogGroup:
+              LogGroupArn: !GetAtt CheckinLogGroup.Arn
+      Policies:
+        - LambdaInvokePolicy:
+            FunctionName: !Ref LoadProfileFunction
+        - LambdaInvokePolicy:
+            FunctionName: !Ref NotifyFunction
+        - LambdaInvokePolicy:
+            FunctionName: !Ref LogResultFunction
+        - Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              # Log-delivery actions do not support resource-level permissions (Step Functions logging docs).
+              Action:
+                - logs:CreateLogDelivery
+                - logs:GetLogDelivery
+                - logs:UpdateLogDelivery
+                - logs:DeleteLogDelivery
+                - logs:ListLogDeliveries
+                - logs:PutResourcePolicy
+                - logs:DescribeResourcePolicies
+                - logs:DescribeLogGroups
+              Resource: "*"
+
+Outputs:
+  StateMachineArn:
+    Value: !Ref CheckinStateMachine
+  WebhookUrl:
+    Value: !Sub "https://${HttpApi}.execute-api.${AWS::Region}.amazonaws.com/telegram/webhook"
+  TableName:
+    Value: !Ref Table
+  AuditBucketName:
+    Value: !Ref AuditBucket
