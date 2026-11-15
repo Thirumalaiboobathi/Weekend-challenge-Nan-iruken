@@ -1,0 +1,14 @@
+{
+ "voice": "en-IN-NeerjaNeural",
+ "rate": "-5%",
+ "scenes": [
+  {"id": "hook", "min": 9, "text": "If your mother falls at home, who finds out — and when?"},
+  {"id": "problem", "min": 18, "text": "Millions of parents in India live alone while their children work in other cities. A daily phone call gets missed, and nothing escalates. Naan Irukken — 'I'm here' — fixes that with one tap a day."},
+  {"id": "demo1", "min": 44, "text": "Every morning she gets one button. If she doesn't answer, it gently reminds her, then alerts family one by one. When someone says they're checking, everyone else is told — and the system keeps waiting until they confirm she's safe. If they don't, it re-escalates."},
+  {"id": "demo2", "min": 17, "text": "If she needs help, one tap alerts everyone at once. If no one responds, she's told to call 108."},
+  {"id": "demo3", "min": 11, "text": "She doesn't even need the button — any message counts as 'I'm here'."},
+  {"id": "arch", "min": 34, "text": "Each day's check-in is one AWS Step Functions Standard execution, started by EventBridge Scheduler. Every wait is a task token with a timeout, so nothing runs — and nothing costs — while it waits. Button taps come through API Gateway to Lambda, which resumes the workflow. DynamoDB holds the state, and S3 keeps a private audit trail."},
+  {"id": "dash", "min": 22, "text": "Families get a private dashboard: the month at a glance, routine changes, and the real cost — a fraction of a rupee per family."},
+  {"id": "close", "min": 14, "text": "One SAM template, one deploy command, and an escalation pattern anyone can reuse for lone workers, medication reminders, or approvals. Naan Irukken."}
+ ]
+}

@@ -13,3 +13,7 @@ Thumbs.db
 .pytest_cache/
 demo-video/.profile/
 demo-video/out/
+demo-video/raw/
+demo-video/work/
+demo-video/audio/
+demo-video/contacts-backup.json
